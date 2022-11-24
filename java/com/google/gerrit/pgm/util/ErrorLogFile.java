@@ -48,6 +48,7 @@ import org.apache.log4j.LogManager;
 import org.apache.log4j.Logger;
 import org.apache.log4j.PatternLayout;
 import org.eclipse.jgit.lib.Config;
+import org.slf4j.bridge.SLF4JBridgeHandler;
 
 public class ErrorLogFile {
   static final String LOG_NAME = "error_log";
@@ -69,6 +70,12 @@ public class ErrorLogFile {
     Logger root = LogManager.getRootLogger();
     root.removeAllAppenders();
     root.addAppender(dst);
+    root.setLevel(Level.INFO);
+  }
+
+  public static void initLoggingBridge() {
+    java.util.logging.LogManager.getLogManager().reset();
+    SLF4JBridgeHandler.install();
   }
 
   public static LifecycleListener start(Path sitePath, Config config) throws IOException {
@@ -97,11 +104,18 @@ public class ErrorLogFile {
     boolean json = config.getBoolean("log", "jsonLogging", false);
     boolean text = config.getBoolean("log", "textLogging", true) || !json;
     boolean rotate = config.getBoolean("log", "rotate", true);
+    final PatternLayout pattern = new PatternLayout("[%d] [%t] %-5p %c %x: %m%n");
 
     if (text) {
       root.addAppender(
           SystemLog.createAppender(
-              logdir, LOG_NAME, new PatternLayout("[%d] [%t] %-5p %c %x: %m%n"), rotate));
+              logdir, LOG_NAME, pattern, rotate));
+      final ConsoleAppender stdout = new ConsoleAppender();
+      stdout.setLayout(pattern);
+      stdout.setTarget("System.out");
+      stdout.setThreshold(Level.INFO);
+      stdout.activateOptions();
+      LogManager.getRootLogger().addAppender(stdout);
     }
 
     if (json) {

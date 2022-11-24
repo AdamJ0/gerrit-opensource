@@ -1,5 +1,5 @@
 /********************************************************************************
- * Copyright (c) 2014-2018 WANdisco
+ * Copyright (c) 2014-2020 WANdisco
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,13 +18,30 @@ import com.google.gerrit.reviewdb.client.Branch;
 import com.google.gerrit.reviewdb.client.Change;
 import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.reviewdb.server.ReviewDb;
-import com.google.gerrit.server.events.*;
+import com.google.gerrit.server.events.ChangeDeletedEvent;
+import com.google.gerrit.server.events.ChangeEvent;
+import com.google.gerrit.server.events.Event;
+import com.google.gerrit.server.events.EventBroker;
+import com.google.gerrit.server.events.EventDeserializer;
+import com.google.gerrit.server.events.EventListener;
+import com.google.gerrit.server.events.EventTypes;
+import com.google.gerrit.server.events.PatchSetEvent;
+import com.google.gerrit.server.events.ProjectCreatedEvent;
+import com.google.gerrit.server.events.ProjectEvent;
+import com.google.gerrit.server.events.RefEvent;
+import com.google.gerrit.server.events.RefUpdatedEvent;
+import com.google.gerrit.server.events.SkipReplication;
+import com.google.gerrit.server.events.SupplierDeserializer;
+import com.google.gerrit.server.events.SupplierSerializer;
+import com.google.gerrit.server.notedb.ChangeNotes;
 import com.google.gerrit.server.permissions.PermissionBackendException;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonSyntaxException;
 import com.google.gwtorm.server.OrmException;
 import com.wandisco.gerrit.gitms.shared.events.EventWrapper;
+
+import static com.google.gerrit.server.replication.ReplicationConstants.EVENTS_REPLICATION_THREAD_NAME;
 import static com.wandisco.gerrit.gitms.shared.events.EventWrapper.Originator.GERRIT_EVENT;
 
 import javax.inject.Singleton;
@@ -36,7 +53,6 @@ import java.util.Objects;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
-import static com.google.gerrit.server.replication.ReplicationConstants.*;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.nio.file.StandardOpenOption.APPEND;
 import static java.nio.file.StandardOpenOption.CREATE;
@@ -86,7 +102,7 @@ public class ReplicatedEventsWorker implements Runnable, Replicator.GerritPublis
 
     if (eventReaderAndPublisherThread == null) {
       replicatorInstance = Replicator.getInstance();
-      replicatorInstance.subscribeEvent(GERRIT_EVENT, this);
+      Replicator.subscribeEvent(GERRIT_EVENT, this);
       // initialize our state, so we can use this to signal shutdown / finish.
       finished = false;
       // Passed in via lifecycle manager, to avoid a cyclic dependency in eventbroker->repEventManager->eventBroker
@@ -245,7 +261,7 @@ public class ReplicatedEventsWorker implements Runnable, Replicator.GerritPublis
           return false;
         }
 
-        logger.atFiner().log("RE Original event: %s", originalEvent.toString());
+        logger.atFine().log("RE Original event: %s", originalEvent.toString());
         // All events we read in are replicated events.
         originalEvent.hasBeenReplicated = true;
 
@@ -261,7 +277,7 @@ public class ReplicatedEventsWorker implements Runnable, Replicator.GerritPublis
         return result;
       } catch (ClassNotFoundException e) {
         logger.atInfo().log(errorReplicatedEventMessage, newEvent.getEvent());
-        logger.atFiner().withCause(e).log(errorReplicatedEventMessage, newEvent.getEvent());
+        logger.atFine().withCause(e).log(errorReplicatedEventMessage, newEvent.getEvent());
         result = false;
       } catch (RuntimeException e) {
         logger.atSevere().withCause(e).log(errorReplicatedEventMessage, newEvent.getEvent());
@@ -283,19 +299,31 @@ public class ReplicatedEventsWorker implements Runnable, Replicator.GerritPublis
     ReplicatedChangeEventInfo changeEventInfo = getChangeEventInfo(newEvent);
 
     if (changeEventInfo.isSupported()) {
-      logger.atFiner().log("RE going to fire event...");
+      logger.atFine().log("RE going to fire event...");
 
       try (ReviewDb db = replicatedEventsManager.getReviewDbProvider().get()) {
         if (changeEventInfo.getChangeAttr() != null) {
-          logger.atFiner().log("RE using changeAttr: %s...", changeEventInfo.getChangeAttr());
-          Change change = db.changes().get(new Change.Id(changeEventInfo.getChangeAttr().number));
-          logger.atFiner().log("RE got change from db: %s", change);
+          logger.atFine().log("RE using changeAttr: %s...", changeEventInfo.getChangeAttr());
+          if (newEvent instanceof ChangeDeletedEvent){
+            //changeDeletedEvent has changeAttr needs fired without look up as it is a delete
+            // fired through generic event path to avoid Change look up
+            changeHookRunner.postEvent(newEvent);
+            return true;
+          }
+          // As this is a replicated event, and we are raising to listeners create without auto rebuilding of the
+          // index, this stops us potentially rebuilding the index twice.  If we raise a changed event, we later
+          // check for reindexing again which could rebuild a missing index (used during online migration only )
+          ChangeNotes changeNotes = replicatedEventsManager.getChangeNotesFactory().createWithAutoRebuildingDisabled(
+                  db, new Project.NameKey(changeEventInfo.getProjectName()), new Change.Id(changeEventInfo.getChangeAttr().number));
+          Change change = changeNotes.getChange();
+          logger.atFine().log("RE got change from db: %s", change);
           changeHookRunner.postEvent(change, (ChangeEvent) newEvent);
         } else if (changeEventInfo.getBranchName() != null) {
-          logger.atFiner().log("RE using branchName: %s", changeEventInfo.getBranchName());
+          logger.atFine().log("RE using branchName: %s", changeEventInfo.getBranchName());
           changeHookRunner.postEvent(changeEventInfo.getBranchName(), (RefEvent) newEvent);
         } else if (newEvent instanceof ProjectCreatedEvent) {
-          changeHookRunner.postEvent(((ProjectCreatedEvent) newEvent));
+          changeHookRunner.postEvent(((ProjectCreatedEvent) newEvent).getProjectNameKey(),
+                                     ((ProjectCreatedEvent) newEvent));
         } else {
           logger.atSevere().withCause(new Exception("refs is null for supported event")).log(
               "RE Internal error, it's *supported*, but refs is null");
@@ -309,9 +337,13 @@ public class ReplicatedEventsWorker implements Runnable, Replicator.GerritPublis
   }
 
   /**
-   * isEventToBeSkipped uses 2 things.
+   * isEventToBeSkipped uses 3 things.
    * 1) has the event previously been replicated - if so we dont do it again!!
    * 2) IS the event in a list of events we are not to replicate ( a skip list )
+   * 3) Is the event annotated with the @SkipReplication annotation, if it is, skip it.
+   *    Using the SkipReplication annotation should be used with caution as their are normally
+   *    multiple events associated with a given operation in Gerrit and skipping one could
+   *    leave the repository in a bad state.
    *
    * @param event
    * @return
@@ -319,6 +351,13 @@ public class ReplicatedEventsWorker implements Runnable, Replicator.GerritPublis
   public boolean isEventToBeSkipped(Event event) {
     if (event.hasBeenReplicated) {
       // dont cause cyclic loop replicating forever./
+      return true;
+    }
+
+    //If the event contains a skipReplication annotation then we skip the event
+    Class eventClass = EventTypes.getClass(event.type);
+
+    if(eventClass.isAnnotationPresent(SkipReplication.class)){
       return true;
     }
 

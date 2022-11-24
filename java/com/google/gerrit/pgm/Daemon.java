@@ -46,9 +46,11 @@ import com.google.gerrit.httpd.GetUserFilter;
 import com.google.gerrit.httpd.GitOverHttpModule;
 import com.google.gerrit.httpd.H2CacheBasedWebSession;
 import com.google.gerrit.httpd.HttpCanonicalWebUrlProvider;
+import com.google.gerrit.httpd.RequestCleanupFilter;
 import com.google.gerrit.httpd.RequestContextFilter;
 import com.google.gerrit.httpd.RequestMetricsFilter;
 import com.google.gerrit.httpd.RequireSslFilter;
+import com.google.gerrit.httpd.SetThreadNameFilter;
 import com.google.gerrit.httpd.WebModule;
 import com.google.gerrit.httpd.WebSshGlueModule;
 import com.google.gerrit.httpd.auth.oauth.OAuthModule;
@@ -361,19 +363,19 @@ public class Daemon extends SiteProgram {
 
   @VisibleForTesting
   public void start() throws IOException {
+    ErrorLogFile.initLoggingBridge();
     if (dbInjector == null) {
       dbInjector = createDbInjector(true /* enableMetrics */, MULTI_USER);
     }
     cfgInjector = createCfgInjector();
     config = cfgInjector.getInstance(Key.get(Config.class, GerritServerConfig.class));
+    if (!consoleLog) {
+      manager.add(ErrorLogFile.start(getSitePath(), config));
+    }
     initIndexType();
     sysInjector = createSysInjector();
     sysInjector.getInstance(PluginGuiceEnvironment.class).setDbCfgInjector(dbInjector, cfgInjector);
     manager.add(dbInjector, cfgInjector, sysInjector);
-
-    if (!consoleLog) {
-      manager.add(ErrorLogFile.start(getSitePath(), config));
-    }
 
     sshd &= !sshdOff();
     if (sshd) {
@@ -604,15 +606,17 @@ public class Daemon extends SiteProgram {
 
   private Injector createWebInjector() {
     final List<Module> modules = new ArrayList<>();
-    if (sshd) {
-      modules.add(new ProjectQoSFilter.Module());
-    }
     modules.add(RequestContextFilter.module());
     modules.add(RequestMetricsFilter.module());
     modules.add(H2CacheBasedWebSession.module());
     modules.add(sysInjector.getInstance(GerritAuthModule.class));
     modules.add(sysInjector.getInstance(GitOverHttpModule.class));
+    if (sshd) {
+      modules.add(new ProjectQoSFilter.Module());
+    }
+    modules.add(RequestCleanupFilter.module());
     modules.add(AllRequestFilter.module());
+    modules.add(SetThreadNameFilter.module());
     modules.add(sysInjector.getInstance(WebModule.class));
     modules.add(sysInjector.getInstance(RequireSslFilter.Module.class));
     modules.add(new HttpPluginModule());

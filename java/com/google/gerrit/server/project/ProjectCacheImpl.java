@@ -26,7 +26,6 @@ import com.google.common.collect.Sets;
 import com.google.common.flogger.FluentLogger;
 import com.google.gerrit.index.project.ProjectIndexer;
 import com.google.gerrit.lifecycle.LifecycleModule;
-import com.google.gerrit.reviewdb.client.Account;
 import com.google.gerrit.reviewdb.client.AccountGroup;
 import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.cache.CacheModule;
@@ -178,7 +177,7 @@ public class ProjectCacheImpl implements ProjectCache {
         }
         throw new IOException(e);
       }
-      logger.atFine().withCause(e).log("Cannot find project %s", projectName.get());
+      logger.atFine().log("Cannot find project %s", projectName.get());
       return null;
     }
   }
@@ -269,14 +268,21 @@ public class ProjectCacheImpl implements ProjectCache {
               Sets.union(list.get(ListKey.ALL), ImmutableSet.of(newProjectName))));
 
       if ( replicationEnabled ) {
-        ReplicatedCacheManager.replicateMethodCallFromCache(ReplicatedCacheManager.projectCache, "onCreateProjectNoReplication", newProjectName);
+        // this call is being replicated to the other nodes, but we do not want this further replicated on
+        // the other nodes so this is sent with method 'onCreateProjectNoReplication'
+        ReplicatedCacheManager.replicateMethodCallFromCache(ReplicatedCacheManager.projectCache,
+                                                            "onCreateProjectNoReplication",
+                                                            newProjectName);
       }
     } catch (ExecutionException e) {
       logger.atWarning().withCause(e).log("Cannot list available projects");
     } finally {
       listLock.unlock();
     }
-    indexer.get().index(newProjectName);
+    // noRepl here as each site will hit this line on receipt of the above cache event.
+    // remotes still need to do the list manipulation above on new projects so that resulting index is accurate
+    // this allows that to occur and update index locally without sending another global index event.
+    indexer.get().indexNoRepl(newProjectName);
   }
 
   @Override
@@ -370,12 +376,7 @@ public class ProjectCacheImpl implements ProjectCache {
   public void evictAllByName() {
     if (Replicator.isReplicationEnabled()) {
       // replicate the invalidation.
-      for (String name : byName.asMap().keySet()) {
-        // TODO: (trevorg) GER-931 we are turning a one request into many for no benefit.
-        //  What happens if this cache has 2 members and the remote cache has 3 members, we evict
-        // all here but not all remotely.... So I think this needs to be changed long term!
-        ReplicatedCacheManager.replicateEvictionFromCache(CACHE_PROJECTS_BYNAME, name);
-      }
+      ReplicatedCacheManager.replicateEvictionFromCache(CACHE_PROJECTS_BYNAME, ReplicatedCacheManager.evictAllWildCard);
     }
     byName.invalidateAll();
   }

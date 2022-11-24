@@ -6,6 +6,10 @@ function info() {
   fi
 }
 
+function perr() {
+  echo -e "ERROR: $1" 1>&2
+}
+
 ## $1 version to check if allowed
 function versionAllowed() {
   local check_version="$1"
@@ -79,13 +83,10 @@ function prereqs() {
   info " Welcome to the GerritMS installation. Before the install can continue,"
   info " you must:"
   info ""
-  info " * Have one of the following gerrit versions installed before beginning:"
+  info " * Have the following gerrit version installed before beginning:"
   info "     - Gerrit: $NEW_GERRIT_VERSION"
-  for version in "${PREVIOUS_ALLOWED_RP_GERRIT_VERSIONS[@]}"; do
-    info "     - Gerrit MS: $version"
-  done
   info " * Have backed up your existing Gerrit database"
-  info " * Have a version of GitMS (1.9.4 or higher) installed and running"
+  info " * Have a version of GitMS (1.10.0 or higher) installed and running"
   info " * Have a replication group created in GitMS containing all Gerrit nodes"
   info " * Have a valid GitMS admin username/password"
   info " * Stop the Gerrit service on this node"
@@ -135,7 +136,7 @@ function check_user() {
   info ""
 
   if [ "$EUID" -eq 0 ]; then
-    info " \033[1mWARNING:\033[0m It is strongly advised that the GitMS and Gerrit services"
+    info " WARNING: It is strongly advised that the GitMS and Gerrit services"
     info " are not run as root."
     info ""
   fi
@@ -232,6 +233,13 @@ function remove_property() {
   done
 }
 
+# During upgrade, remove any unused legacy properties
+function remove_legacy_config_from_application_properties() {
+  remove_property "gerrit.replicated.events.enabled.receive.distinct" \
+                  "gerrit.replicated.events.enabled.local.republish.distinct" \
+                  "gerrit.replicated.events.distinct.prefix"
+}
+
 ## With the GitMS root location, we can look up a lot of information
 ## and avoid asking the user questions
 function fetch_config_from_application_properties() {
@@ -247,9 +255,6 @@ function fetch_config_from_application_properties() {
   GITMS_SSL_REST_PORT=$(fetch_property "jetty.https.port")
   GERRIT_REPLICATED_EVENTS_SEND=$(fetch_property "gerrit.replicated.events.enabled.send")
   GERRIT_REPLICATED_EVENTS_RECEIVE_ORIGINAL=$(fetch_property "gerrit.replicated.events.enabled.receive.original")
-  GERRIT_REPLICATED_EVENTS_RECEIVE_DISTINCT=$(fetch_property "gerrit.replicated.events.enabled.receive.distinct")
-  GERRIT_REPLICATED_EVENTS_LOCAL_REPUBLISH_DISTINCT=$(fetch_property "gerrit.replicated.events.enabled.local.republish.distinct")
-  GERRIT_REPLICATED_EVENTS_DISTINCT_PREFIX=$(fetch_property "gerrit.replicated.events.distinct.prefix")
   GERRIT_REPLICATED_CACHE_ENABLED=$(fetch_property "gerrit.replicated.cache.enabled")
   GERRIT_REPLICATED_CACHE_NAMES_NOT_TO_RELOAD=$(fetch_property "gerrit.replicated.cache.names.not.to.reload")
   GERRIT_HELPER_SCRIPT_INSTALL_DIR=$(fetch_property "gerrit.helper.scripts.install.directory")
@@ -287,7 +292,7 @@ function get_directory() {
     # If the user does not specify a value starting with "/" 
     # then they are attempting to use a relative path and this is not allowed
     if [[ "$INPUT_DIR" != /* ]]; then
-      echo " ERROR: relative paths not allowed"
+      perr "Relative paths not allowed"
       continue
     fi
     
@@ -302,7 +307,7 @@ function get_directory() {
         if [ "$?" == "0" ]; then
           break
         else
-          echo " ERROR: Directory could not be created"
+          perr "Directory could not be created"
         fi
       fi
     fi
@@ -311,10 +316,10 @@ function get_directory() {
       if [ -w "$INPUT_DIR" ]; then
         break
       else
-        echo " ERROR: $INPUT_DIR is not writable"
+        perr "$INPUT_DIR is not writable"
       fi
     else
-      echo " ERROR: $INPUT_DIR does not exist"
+      perr "$INPUT_DIR does not exist"
     fi
   done
 }
@@ -341,9 +346,9 @@ function get_executable() {
     if [ -x "$EXECUTABLE_PATH" ]; then
       break
     else
-      info ""
-      info " \033[1mERROR:\033[0m path does not exist or is not executable"
-      info ""
+      echo "" 1>&2
+      perr "Path does not exist or is not executable"
+      echo "" 1>&2
     fi
   done
 }
@@ -464,7 +469,7 @@ function check_gerrit_root() {
   local gerrit_config=$gerrit_root"/etc/gerrit.config"
 
   if [ ! -e "$gerrit_config" ]; then
-    echo "ERROR: $gerrit_config does not exist, invalid Gerrit Root directory"
+    perr "$gerrit_config does not exist, invalid Gerrit Root directory"
     return 1
   fi
 
@@ -487,13 +492,13 @@ function check_gerrit_root() {
   fi
 
   if [ ! -e "$gerrit_war_path" ]; then
-    echo " ERROR: $gerrit_war_path does not exist"
+    perr "$gerrit_war_path does not exist"
     return 1
   fi
   
   #check the permmisions of the gerrit.war file
   if [ ! -w "$gerrit_war_path" ]; then
-    echo " ERROR: The gerrit.war file is not writable"
+    perr "The gerrit.war file is not writable"
     exit 1
   fi
 
@@ -506,15 +511,15 @@ function check_gerrit_root() {
     ## variables to be set
     if [ "$NON_INTERACTIVE" == "1" ]; then
       if [[ -z "$UPGRADE" || -z "$UPDATE_REPO_CONFIG" || -z "$RUN_GERRIT_INIT" || -z "$REMOVE_PLUGIN" ]]; then
-        echo ""
-        echo "Error: This install has been detected as an upgrade, but the upgrade flags: "
-        echo ""
-        echo " * UPGRADE"
-        echo " * UPDATE_REPO_CONFIG"
-        echo " * RUN_GERRIT_INIT"
-        echo " * REMOVE_PLUGIN"
-        echo ""
-        echo "have not been set. Non-interactive upgrade requires that these flags are set."
+        echo "" 1>&2
+        perr "This install has been detected as an upgrade, but the upgrade flags: "
+        echo "" 1>&2
+        echo " * UPGRADE" 1>&2
+        echo " * UPDATE_REPO_CONFIG" 1>&2
+        echo " * RUN_GERRIT_INIT" 1>&2
+        echo " * REMOVE_PLUGIN" 1>&2
+        echo "" 1>&2
+        perr "Have not been set. Non-interactive upgrade requires that these flags are set."
         exit 1
       fi
     fi
@@ -523,7 +528,7 @@ function check_gerrit_root() {
 
   if [[ ! "$OLD_BASE_GERRIT_VERSION" == "$NEW_GERRIT_VERSION" && ! "$REPLICATED_UPGRADE" == "true" ]]; then
     ## Gerrit version we're installing does not match the version already installed
-    echo -e " \033[1mERROR:\033[0m Gerrit version detected at this location is at version: $OLD_BASE_GERRIT_VERSION"
+    echo " Gerrit version detected at this location is at version: $OLD_BASE_GERRIT_VERSION"
     echo " The current Gerrit version should be: $NEW_GERRIT_VERSION"
     return 1
   fi
@@ -546,14 +551,14 @@ function check_java() {
       #If the minor version is less than 8 then report an error
       minor_version="${known_java_version_split[1]}"
       if [[ "$minor_version" -ne 8 ]]; then
-        echo "ERROR: We require that you use the latest java 8 version with our applications."
+        perr "We require that you use the latest java 8 version with our applications."
         exit 1
       else
         export JAVA_HOME
       fi
     fi
   else
-    echo "ERROR: Required JAVA_HOME setting not found - aborting."
+    perr "Required JAVA_HOME setting not found - aborting."
     exit 1
   fi
   JAVA_BIN="$JAVA_HOME/bin/java"
@@ -585,7 +590,7 @@ function get_gerrit_root_from_user() {
     ## It should still be verified, but in this case, a failure exits the install
     ## rather than reprompting for input
     if ! check_gerrit_root "$GERRIT_ROOT"; then
-      echo "ERROR: Exiting install, $GERRIT_ROOT does not point to a valid Gerrit install." 1>&2
+      perr "Exiting install, $GERRIT_ROOT does not point to a valid Gerrit install."
       exit 1;
     fi
   fi
@@ -602,10 +607,10 @@ function run_gerrit_init() {
   ret_code="$?"
 
   if [[ "$ret_code" -ne "0" ]]; then
-    info ""
-    info " \033[1mWARNING:\033[0m Init process failed with return code: \033[1m${ret_code}\033[0m."
-    info " The init will have to be performed manually."
-    info ""
+    echo "" 1>&2
+    perr "Init process failed with return code: ${ret_code}."
+    perr "The init will have to be performed manually."
+    echo "" 1>&2
   else
     info ""
     info " Finished init"
@@ -676,17 +681,17 @@ function get_config_from_user() {
         APPLICATION_PROPERTIES+="/replicator/properties/application.properties"
 
         if [ ! -e "$APPLICATION_PROPERTIES" ]; then
-          info ""
-          info " \033[1mERROR:\033[0m $APPLICATION_PROPERTIES cannot be found"
-          info ""
+          echo "" 1>&2
+          perr "$APPLICATION_PROPERTIES cannot be found"
+          echo "" 1>&2
           continue
         fi
 
         break
       else
-        info ""
-        info " \033[1mERROR:\033[0m directory does not exist or is not readable"
-        info ""
+        echo "" 1>&2
+        perr "Directory does not exist or is not readable"
+        echo "" 1>&2
       fi
     done
     
@@ -698,7 +703,7 @@ function get_config_from_user() {
     MAIN_CONF_FILE="$GITMS_ROOT/config/main.conf"
     
     if [[ ! -r $MAIN_CONF_FILE ]]; then
-      info " \033[1mERROR:\033[0m Exiting install, \033[1mmain.conf\033[0m does not exist in the config directory of the GitMS root directory."
+      perr "Exiting install, main.conf does not exist in the config directory of the GitMS root directory."
       exit 1
     fi
 
@@ -707,7 +712,7 @@ function get_config_from_user() {
     # installed with Gerrit.
     umask_value=$(fetch_property_from_main_conf "GITMS_UMASK")
     if [[ -z "$umask_value" ]];then
-      echo "Error: failed to find GITMS_UMASK in GitMS main.conf"
+      perr "Failed to find GITMS_UMASK in GitMS main.conf"
       exit 1
     else
       umask "$umask_value"
@@ -715,12 +720,12 @@ function get_config_from_user() {
     gitmsUser=$(fetch_property_from_main_conf "GITMS_USER")
     
     if [[ "$currentUser" != "$gitmsUser" ]]; then
-      info ""
-      info " \033[1mERROR:\033[0m You must run the GitMS and Gerrit services as the same user."
-      info " Current user: \033[1m$currentUser\033[0m"
-      info " GitMS user: \033[1m$gitmsUser\033[0m"
-      info " Exiting install"
-      info ""
+      echo "" 1>&2
+      perr "You must run the GitMS and Gerrit services as the same user."
+      echo " Current user: $currentUser" 1>&2
+      echo " GitMS user: $gitmsUser" 1>&2
+      echo " Exiting install" 1>&2
+      echo "" 1>&2
       exit 1
     fi
     info ""
@@ -734,9 +739,8 @@ function get_config_from_user() {
   TMP_APPLICATION_PROPERTIES="$SCRATCH/application.properties"
 
   if ! is_gitms_running; then
-    info " \033[1mERROR:\033[0m Looks like Git Multisite is not running"
-    info " Please ensure that Git Multisite is running and re-run the installer."
-    info ""
+    perr "Looks like Git Multisite is not running"
+    perr "Please ensure that Git Multisite is running and re-run the installer."
     exit 1
   fi
 
@@ -744,6 +748,7 @@ function get_config_from_user() {
   ## it is a clean install. Look at the application.properties to determine if
   ## any necessary values are not present. Only offer to set values which are
   ## not already set.
+  remove_legacy_config_from_application_properties
 
   if [ -z "$GERRIT_ENABLED" ]; then
     set_property "gerrit.enabled" "true"
@@ -752,10 +757,10 @@ function get_config_from_user() {
   ## Check if Gerrit is running now that we know the Gerrit root
   if check_gerrit_status -ne 0; then
     ##Gerrit was detected as running, display a warning
-    info ""
-    info " \033[1mERROR:\033[0m A process has been detected on the Gerrit HTTP port \033[1m$(get_gerrit_port)\033[0m."
-    info " Is Gerrit still running? Please make this port available and re-run the installer."
-    info ""
+    echo "" 1>&2
+    perr "A process has been detected on the Gerrit HTTP port $(get_gerrit_port)."
+    perr "Is Gerrit still running? Please make this port available and re-run the installer."
+    echo "" 1>&2
     exit 1
   fi
 
@@ -763,7 +768,7 @@ function get_config_from_user() {
   
   if ps aux | grep GerritCodeReview | grep $GERRIT_ROOT | grep -v " grep " > /dev/null 2>&1; then
     info ""
-    info " \033[1mWARNING:\033[0m Looks like Gerrit is currently running"
+    info "WARNING: Looks like Gerrit is currently running"
     info ""
   fi
 
@@ -825,27 +830,6 @@ function get_config_from_user() {
 
   set_property "gerrit.replicated.events.enabled.receive.original" "$GERRIT_REPLICATED_EVENTS_RECEIVE_ORIGINAL"
 
-  if [ -z "$GERRIT_REPLICATED_EVENTS_RECEIVE_DISTINCT" ]; then
-    GERRIT_REPLICATED_EVENTS_RECEIVE_DISTINCT="false"
-  else
-    info " Gerrit Receive Replicated Events as distinct: $GERRIT_REPLICATED_EVENTS_RECEIVE_DISTINCT"
-  fi
-  set_property "gerrit.replicated.events.enabled.receive.distinct" "$GERRIT_REPLICATED_EVENTS_RECEIVE_DISTINCT"
-
-  if [ -z "$GERRIT_REPLICATED_EVENTS_LOCAL_REPUBLISH_DISTINCT" ]; then
-    GERRIT_REPLICATED_EVENTS_LOCAL_REPUBLISH_DISTINCT="false"
-  else
-    info " Gerrit republish local events as distinct: $GERRIT_REPLICATED_EVENTS_LOCAL_REPUBLISH_DISTINCT"
-  fi
-  set_property "gerrit.replicated.events.enabled.local.republish.distinct" "$GERRIT_REPLICATED_EVENTS_LOCAL_REPUBLISH_DISTINCT"
-
-  if [ -z "$GERRIT_REPLICATED_EVENTS_DISTINCT_PREFIX" ]; then
-    GERRIT_REPLICATED_EVENTS_DISTINCT_PREFIX="REPL-"
-  else
-    info " Gerrit prefix for current node distinct events: $GERRIT_REPLICATED_EVENTS_DISTINCT_PREFIX"
-  fi
-  set_property "gerrit.replicated.events.distinct.prefix" "$GERRIT_REPLICATED_EVENTS_DISTINCT_PREFIX"
-
   if [ -z "$GERRIT_REPLICATED_CACHE_ENABLED" ]; then
     GERRIT_REPLICATED_CACHE_ENABLED="true"
   else
@@ -854,7 +838,7 @@ function get_config_from_user() {
   set_property "gerrit.replicated.cache.enabled" "$GERRIT_REPLICATED_CACHE_ENABLED"
 
   ## Array of caches we do not wish to reload.  We need to deal with fresh install / upgrade scenarios and user changes to this field.
-  CACHE_NAMES_NOT_TO_RELOAD=(changes projects groups_byinclude groups_byname groups_byuuid groups_external groups_members)
+  CACHE_NAMES_NOT_TO_RELOAD=(changes projects groups_byinclude groups_byname groups_byuuid groups_external groups_members groups_bysubgroup groups_bymember)
 
   if [ -z "$GERRIT_REPLICATED_CACHE_NAMES_NOT_TO_RELOAD" ]; then
     # to avoid keeping 2 lists of same info, just build from our array above.
@@ -881,9 +865,9 @@ function get_config_from_user() {
         info " Replication Group found with ID: $GERRIT_RPGROUP_ID"
         break
       else
-        info ""
-        info " \033[1mERROR:\033[0m Could not retrieve Replication Group ID with configuration provided"
-        info ""
+        echo "" 1>&2
+        perr "Could not retrieve Replication Group ID with configuration provided"
+        echo "" 1>&2
       fi
     done
   else
@@ -963,9 +947,9 @@ function get_config_from_user() {
           GERRIT_HELPER_SCRIPT_INSTALL_DIR=$INPUT
           break
         else
-          info ""
-          info " \033[1mERROR:\033[0m directory does not exist or is not writable"
-          info ""
+          echo "" 1>&2
+          perr "Directory does not exist or is not writable"
+          echo "" 1>&2
           continue
         fi
       fi
@@ -988,8 +972,8 @@ function is_gitms_running() {
       return 0
     fi
   else
-    info " \033[1mWARNING:\033[0m Git Multisite startup script cannot be found or is not executable."
-    info ""
+    perr "Git Multisite startup script cannot be found or is not executable."
+    echo "" 1>&2
   fi
   return 1
 }
@@ -1072,10 +1056,10 @@ function create_backup() {
     : # exited ok
   else
     exval=$?
-    echo "ERROR: backup command ('$CMD') failed: $exval" 1>&2
-    echo "ERROR: backup STDERR was:" 1>&2
+    perr "Backup command ('$CMD') failed: $exval"
+    perr "Backup STDERR was:"
     cat "${tmpFile}" 1>&2
-    echo "ERROR: end of STDERR." 1>&2
+    perr "End of STDERR."
     exit 2
   fi
   
@@ -1153,7 +1137,7 @@ function install_gerrit_scripts() {
   
   CONSOLE_API_JAR="console-api.jar"
   if [[ ! -f "$CONSOLE_API_JAR" ]];then
-    echo "Error: $CONSOLE_API_JAR not found"
+    perr "$CONSOLE_API_JAR not found"
     exit 1
   else
     copy_files_into_place "$GERRIT_HELPER_SCRIPT_INSTALL_DIR" "$CONSOLE_API_JAR"
@@ -1164,7 +1148,7 @@ function copy_files_into_place() {
   dir_to_copy_file_to=$1 && shift
   cp -f -t "$dir_to_copy_file_to/." "$@"
   if [[ $? -ne 0 ]]; then
-    echo "ERROR: Failed to copy to directory \"$dir_to_copy_file_to\" some/all of the following files: $*" 1>&2
+    perr "Failed to copy to directory \"$dir_to_copy_file_to\" some/all of the following files: $*"
     exit 1
   fi
 }
@@ -1184,44 +1168,44 @@ function finalize_install() {
   run_gerrit_init
   cleanup
 
-  info ""
-  info " GitMS and Gerrit have now been configured."
-  info ""
+  echo ""
+  echo " GitMS and Gerrit have now been configured."
+  echo ""
   bold " Next Steps:"
-  info ""
-  info " * Restart GitMS on this node now to finalize the configuration changes"
+  echo ""
+  echo " * Restart GitMS on this node now to finalize the configuration changes"
 
   if [[ ! "$FIRST_NODE" == "true" && ! "$REPLICATED_UPGRADE" == "true" ]]; then
-    info " * If you have rsync'd this Gerrit installation from a previous node"
-    info "   please ensure you have updated the $(sanitize_path "${GERRIT_ROOT}/etc/gerrit.config")"
-    info "   file for this node. In particular, the canonicalWebUrl and database settings should"
-    info "   be verified to be correct for this node."
+    echo " * If you have rsync'd this Gerrit installation from a previous node"
+    echo "   please ensure you have updated the $(sanitize_path "${GERRIT_ROOT}/etc/gerrit.config")"
+    echo "   file for this node. In particular, the canonicalWebUrl and database settings should"
+    echo "   be verified to be correct for this node."
   else
     local gerrit_base_path=$(get_gerrit_base_path "$GERRIT_ROOT")
     local syncRepoCmdPath=$(sanitize_path "${GERRIT_HELPER_SCRIPT_INSTALL_DIR}/sync_repo.sh")
 
     if [ ! "$REPLICATED_UPGRADE" == "true" ]; then
-      info " * rsync $GERRIT_ROOT to all of your GerritMS nodes"
+      echo " * rsync $GERRIT_ROOT to all of your GerritMS nodes."
       if [[ "${gerrit_base_path#$GERRIT_ROOT/}" = /* ]]; then
-        info " * rsync $gerrit_base_path to all of your GerritMS nodes"
+        echo " * rsync $gerrit_base_path to all of your GerritMS nodes."
       fi
 
-      info " * On each of your Gerrit nodes, update gerrit.config:"
-      info "\t- change the hostname of canonicalURL to the hostname for that node"
-      info "\t- ensure that database details are correct"
+      echo " * On each of your Gerrit nodes, update gerrit.config:"
+      echo -e "\t- change the hostname of canonicalURL to the hostname for that node"
+      echo -e "\t- ensure that database details are correct."
 
-      info " * Run ${syncRepoCmdPath} on one node to add any existing"
-      info "   Gerrit repositories to GitMS. Note that even if this is a new install of"
-      info "   Gerrit with no user added repositories, running sync_repo.sh is still"
-      info "   required to ensure that All-Projects and All-Users are properly replicated."
+      echo " * Run ${syncRepoCmdPath} on one node to add any existing"
+      echo "   Gerrit repositories to GitMS. Note that even if this is a new install of"
+      echo "   Gerrit with no user added repositories, running sync_repo.sh is still"
+      echo "   required to ensure that All-Projects and All-Users are properly replicated."
     fi
 
-    info " * Run this installer on all of your other Gerrit nodes"
-    info " * When all nodes have been installed, you are ready to start the Gerrit services"
-    info "   across all nodes."
+    echo " * Run this installer on all of your other Gerrit nodes."
+    echo " * When all nodes have been installed, you are ready to start the Gerrit services"
+    echo "   across all nodes."
   fi
 
-  info ""
+  echo ""
 
   if [ "$NON_INTERACTIVE" == "1" ]; then
     echo "Non-interactive install completed"
@@ -1333,7 +1317,7 @@ function check_for_non_interactive_mode() {
     APPLICATION_PROPERTIES+="/replicator/properties/application.properties"
 
     if [ ! -e "$APPLICATION_PROPERTIES" ]; then
-      info "ERROR: Non-interactive installation aborted, the file $APPLICATION_PROPERTIES does not exist"
+      perr "Non-interactive installation aborted, the file $APPLICATION_PROPERTIES does not exist"
       exit 1
     fi
 
@@ -1346,9 +1330,6 @@ function check_for_non_interactive_mode() {
     local tmp_gerrit_events_path=$(fetch_property "gerrit.events.basepath")
     local tmp_gerrit_replicated_events_send=$(fetch_property "gerrit.replicated.events.enabled.send")
     local tmp_gerrit_replicated_events_receive_original=$(fetch_property "gerrit.replicated.events.enabled.receive.original")
-    local tmp_gerrit_replicated_events_receive_distinct=$(fetch_property "gerrit.replicated.events.enabled.receive.distinct")
-    local tmp_gerrit_replicated_events_local_republish_distinct=$(fetch_property "gerrit.replicated.events.enabled.local.republish.distinct")
-    local tmp_gerrit_replicated_events_distinct_prefix=$(fetch_property "gerrit.replicated.events.distinct.prefix")
     local tmp_gerrit_replicated_cache_enabled=$(fetch_property "gerrit.replicated.cache.enabled")
     local tmp_gerrit_replicated_cache_names_not_to_reload=$(fetch_property "gerrit.replicated.cache.names.not.to.reload")
     local tmp_gerrit_helper_script_install_directory=$(fetch_property "gerrit.helper.scripts.install.directory")
@@ -1383,18 +1364,6 @@ function check_for_non_interactive_mode() {
       GERRIT_REPLICATED_EVENTS_RECEIVE_ORIGINAL="$tmp_gerrit_replicated_events_receive_original"
     fi
 
-    if [ ! -z "$tmp_gerrit_replicated_events_receive_distinct" ]; then
-      GERRIT_REPLICATED_EVENTS_RECEIVE_DISTINCT="$tmp_gerrit_replicated_events_receive_distinct"
-    fi
-
-    if [ ! -z "$tmp_gerrit_replicated_events_local_republish_distinct" ]; then
-      GERRIT_REPLICATED_EVENTS_LOCAL_REPUBLISH_DISTINCT="$tmp_gerrit_replicated_events_local_republish_distinct"
-    fi
-
-    if [ ! -z "$tmp_gerrit_replicated_events_distinct_prefix" ]; then
-      GERRIT_REPLICATED_EVENTS_DISTINCT_PREFIX="$tmp_gerrit_replicated_events_distinct_prefix"
-    fi
-
     if [ ! -z "$tmp_gerrit_replicated_cache_enabled" ]; then
       GERRIT_REPLICATED_CACHE_ENABLED="$tmp_gerrit_replicated_cache_enabled"
     fi
@@ -1408,11 +1377,10 @@ function check_for_non_interactive_mode() {
     fi
 
     ## Check that all variables are now set to something
-    if [[ ! -z "$GERRIT_ROOT"
-      && ! -z "$GERRIT_RPGROUP_ID" && ! -z "$GERRIT_REPO_HOME" && ! -z "$GERRIT_EVENTS_PATH" && ! -z "$DELETED_REPO_DIRECTORY"
-      && ! -z "$GERRIT_REPLICATED_EVENTS_SEND" && ! -z "$GERRIT_REPLICATED_EVENTS_RECEIVE_ORIGINAL"
-      && ! -z "$GERRIT_REPLICATED_EVENTS_RECEIVE_DISTINCT" && ! -z "$GERRIT_REPLICATED_EVENTS_LOCAL_REPUBLISH_DISTINCT"
-      && ! -z "$GERRIT_REPLICATED_EVENTS_DISTINCT_PREFIX" && ! -z "$GERRIT_REPLICATED_CACHE_ENABLED"
+    if [[ ! -z "$GERRIT_ROOT" && ! -z "$GERRIT_RPGROUP_ID"
+      && ! -z "$GERRIT_REPO_HOME" && ! -z "$GERRIT_EVENTS_PATH"
+      && ! -z "$DELETED_REPO_DIRECTORY" && ! -z "$GERRIT_REPLICATED_EVENTS_SEND"
+      && ! -z "$GERRIT_REPLICATED_EVENTS_RECEIVE_ORIGINAL" && ! -z "$GERRIT_REPLICATED_CACHE_ENABLED"
       && ! -z "$GERRIT_REPLICATED_CACHE_NAMES_NOT_TO_RELOAD" && ! -z "$GERRIT_HELPER_SCRIPT_INSTALL_DIR" ]]; then
 
       ## On an upgrade, some extra variables must be set. If they are not, non-interactive
@@ -1427,13 +1395,13 @@ function check_for_non_interactive_mode() {
 
       ## GERRIT_ROOT must exist as well
       if [ ! -d "$GERRIT_ROOT" ]; then
-        info "ERROR: Non-interactive installation aborted, the GERRIT_ROOT at $GERRIT_ROOT does not exist"
+        perr "Non-interactive installation aborted, the GERRIT_ROOT at $GERRIT_ROOT does not exist"
         exit 1
       fi
       
       ## CURL_ENVVARS_APPROVED must be either true or false
       if [ ! "$CURL_ENVVARS_APPROVED" == "true" ] && [ ! "$CURL_ENVVARS_APPROVED" == "false" ]; then
-        info "ERROR: Non-interactive installation aborted, the CURL_ENVVARS_APPROVED must be either \"true\" or \"false\". Currently is \"$CURL_ENVVARS_APPROVED\""
+        perr "Non-interactive installation aborted, the CURL_ENVVARS_APPROVED must be either \"true\" or \"false\". Currently is \"$CURL_ENVVARS_APPROVED\""
         exit 1
       fi
 
@@ -1506,7 +1474,7 @@ function mkdirectory(){
     if [[ "$create_dir" == "true" ]]; then
       mkdir -p "$1"
       if [[ "$?" != "0" ]]; then
-        info "ERROR: The directory $1 cannot be created"
+        perr "The directory $1 cannot be created"
         exit 1
       fi
     fi
@@ -1515,8 +1483,8 @@ function mkdirectory(){
 NON_INTERACTIVE=0
 WD_GERRIT_VERSION=$(get_gerrit_version "release.war")
 NEW_GERRIT_VERSION=$(echo $WD_GERRIT_VERSION | cut -f1 -d '-')
-GERRIT_RELEASE_NOTES="https://gerrit-documentation.storage.googleapis.com/ReleaseNotes/ReleaseNotes-2.13.html"
-GERRITMS_INSTALL_DOC="http://docs.wandisco.com/gerrit/1.9/#doc_gerritinstall"
+GERRIT_RELEASE_NOTES="https://www.gerritcodereview.com/2.16.html"
+GERRITMS_INSTALL_DOC="http://docs.wandisco.com/gerrit/1.10/#doc_gerritinstall"
 
 check_executables
 get_gerrit_root_from_user
@@ -1549,9 +1517,6 @@ if [ "$NON_INTERACTIVE" == "1" ]; then
   echo "GERRIT_EVENTS_PATH: $GERRIT_EVENTS_PATH"
   echo "GERRIT_REPLICATED_EVENTS_SEND: $GERRIT_REPLICATED_EVENTS_SEND"
   echo "GERRIT_REPLICATED_EVENTS_RECEIVE_ORIGINAL: $GERRIT_REPLICATED_EVENTS_RECEIVE_ORIGINAL"
-  echo "GERRIT_REPLICATED_EVENTS_RECEIVE_DISTINCT: $GERRIT_REPLICATED_EVENTS_RECEIVE_DISTINCT"
-  echo "GERRIT_REPLICATED_EVENTS_LOCAL_REPUBLISH_DISTINCT: $GERRIT_REPLICATED_EVENTS_LOCAL_REPUBLISH_DISTINCT"
-  echo "GERRIT_REPLICATED_EVENTS_DISTINCT_PREFIX: $GERRIT_REPLICATED_EVENTS_DISTINCT_PREFIX"
   echo "GERRIT_REPLICATED_CACHE_ENABLED: $GERRIT_REPLICATED_CACHE_ENABLED"
   echo "GERRIT_REPLICATED_CACHE_NAMES_NOT_TO_RELOAD: $GERRIT_REPLICATED_CACHE_NAMES_NOT_TO_RELOAD"
   echo "BACKUP_DIR: $BACKUP_DIR"

@@ -19,6 +19,7 @@ import com.google.gerrit.gerritconsoleapi.exceptions.LogAndExitException;
 import com.wandisco.gerrit.gitms.shared.config.lfs.LfsConfigFactory;
 import com.wandisco.gerrit.gitms.shared.config.lfs.LfsProjectConfigSection;
 import com.wandisco.gerrit.gitms.shared.config.lfs.LfsStorageBackend;
+import com.wandisco.gerrit.gitms.shared.exception.ConfigurationException;
 import com.wandisco.gerrit.gitms.shared.lfs.LfsFsRepository;
 import com.wandisco.gerrit.gitms.shared.lfs.LfsFsRepositoryFactory;
 import com.wandisco.gerrit.gitms.shared.properties.GitMsApplicationProperties;
@@ -53,7 +54,7 @@ public class LfsRepositoryUtilities extends Logging {
       try {
         configFactory = LfsConfigFactory.getInstance();
       } catch (Exception e) {
-        Logging.logerror(logger, "console-api: ERROR: " , e);
+        Logging.logerror(logger, "console-api: ERROR: " + e.getMessage(), e);
         throw new LogAndExitException(LFS_STORAGE_BACKEND_ERROR.getDescription() + " : Failed to obtain the LfsConfigFactory instance. ", e, LFS_STORAGE_BACKEND_ERROR.getCode());
       }
     }
@@ -91,20 +92,14 @@ public class LfsRepositoryUtilities extends Logging {
     GitMsApplicationProperties applicationProperties = null;
     try {
       applicationProperties = gitMsApplicationProperties == null ? new GitMsApplicationProperties() : gitMsApplicationProperties;
-    } catch (IOException e) {
+    } catch (final IOException | ConfigurationException e) {
       throw new LogAndExitException(LFS_CONFIG_INFO_ERROR.getDescription() + " : Failed to get GitMS application properties. Details: ", e, LFS_CONFIG_INFO_ERROR.getCode());
     }
 
-    String repoHome = null;
-    try {
-      if (Strings.isNullOrEmpty(applicationProperties.getGerritRepoHome()))
-      {
-        throw new LogAndExitException(LFS_CONFIG_INFO_ERROR.getDescription() + " : Invalid null value for {gerrit.repo.home}.", LFS_CONFIG_INFO_ERROR.getCode());
-      }
-      repoHome = applicationProperties.getGerritRepoHome();
-    } catch (IOException e) {
-      throw new LogAndExitException(LFS_CONFIG_INFO_ERROR.getDescription() + " : A problem occurred when obtaining gitms property {gerrit.repo.home}. Details: ", e, LFS_CONFIG_INFO_ERROR.getCode());
+    if (Strings.isNullOrEmpty(applicationProperties.getGerritRepoHome())) {
+      throw new LogAndExitException(LFS_CONFIG_INFO_ERROR.getDescription() + " : Invalid null value for {gerrit.repo.home}.", LFS_CONFIG_INFO_ERROR.getCode());
     }
+    final String repoHome = applicationProperties.getGerritRepoHome();
 
     // Search for our repo in the gerrit repo home location.
     Path repoPath = Paths.get(repoHome, repositoryName);

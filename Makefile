@@ -23,12 +23,19 @@ current_dir := $PWD
 # Gerrit repo root can be set to the mkfile path location
 GERRIT_ROOT= $(mkfile_path)
 GERRIT_BAZELCACHE_PATH := $(shell echo $(realpath $(shell echo ~/.gerritcodereview/bazel-cache)))
+GERRIT_BAZEL_BASE_PATH := $(shell bazelisk info output_base 2> /dev/null)
 
 # JENKINS_WORKSPACE is the location where the job puts work by default, and we need to have assets paths relative
 # to the workspace in some occasions.
 JENKINS_WORKSPACE ?= $(GERRIT_ROOT)
-ARTIFACT_REPO := libs-staging-local
 
+# Allow customers to pass in their own test or local artifactory for deployment
+ARTIFACTORY_SERVER ?= http://artifacts.wandisco.com:8081/artifactory
+
+# Also allow us to control which repository to deploy to - e.g. libs-release / local testing repo.
+ARTIFACT_REPO ?= libs-staging-local
+
+ARTIFACTORY_DESTINATION := $(ARTIFACTORY_SERVER)/$(ARTIFACT_REPO)
 
 # Works on OSX.
 VERSION := $(shell $(GERRIT_ROOT)/build-tools/get_version_number.sh $(GERRIT_ROOT))
@@ -74,7 +81,7 @@ DEV_BOX_TMP_TEST_LOCATION := /tmp/builds/gerritms
 BUILD_USER=$USER
 git_username=Testme
 
-all: display_version clean fast-assembly installer run-integration-tests
+all: display_version clean fast-assembly installer run-acceptance-tests
 .PHONY:all
 
 all-skip-tests: display_version fast-assembly installer skip-tests
@@ -82,7 +89,7 @@ all-skip-tests: display_version fast-assembly installer skip-tests
 
 display_version:
 	@echo "About to use the following version information."
-	@./tools/workspace-status.sh
+	@python tools/workspace_status.py
 .PHONY:display_version
 
 # Do an assembly without doing unit tests, of all our builds
@@ -122,8 +129,12 @@ clean: | $(testing_location)
 	@echo "************ Clean Phase Starting **************"
 	bazelisk clean
 	rm -rf $(GERRIT_BAZEL_OUT)
-	rm -rf $(GERRIT_TEST_LOCATION)/jgit-update-service
 	rm -f $(GERRIT_ROOT)/env.properties
+
+	@# Clear jgit artifacts from test location, if known.
+	$(if $(GERRIT_TEST_LOCATION), \
+        rm -rf $(GERRIT_TEST_LOCATION)/jgit-update-service, \
+        @echo "GERRIT_TEST_LOCATION not set, skipping.")
 
 	@# we should think about only doing this with a force flag, but for now always wipe the cache - only way to be sure!!
 	@echo cache located here: $(GERRIT_BAZELCACHE_PATH)
@@ -131,16 +142,29 @@ clean: | $(testing_location)
 	@# Going to clear out anything that looks like our known assets for now...!
 	@echo
 	@echo "Deleting JGit cached assets.."
-	@ls $(GERRIT_BAZELCACHE_PATH)/downloaded-artifacts/*jgit*
-	@rm -fr $(GERRIT_BAZELCACHE_PATH)/downloaded-artifacts/*jgit*
+	@ls $(GERRIT_BAZELCACHE_PATH)/downloaded-artifacts/*jgit* || echo "Can't find downloaded-artifacts/*jgit*, maybe assets already deleted?"
+	@rm -rf $(GERRIT_BAZELCACHE_PATH)/downloaded-artifacts/*jgit*
 	@echo
 	@echo "Deleting Gerrit-GitMS-Interface cached assets..."
-	@ls $(GERRIT_BAZELCACHE_PATH)/downloaded-artifacts/*gitms*
-	@rm -fr $(GERRIT_BAZELCACHE_PATH)/downloaded-artifacts/*gitms*
+	@ls $(GERRIT_BAZELCACHE_PATH)/downloaded-artifacts/*gitms* || echo "Can't find downloaded-artifacts/*gitms*, maybe assets already deleted?"
+	@rm -rf $(GERRIT_BAZELCACHE_PATH)/downloaded-artifacts/*gitms*
 
 	@echo "************ Clean Phase Finished **************"
 
 .PHONY:clean
+
+nuclear-clean: clean
+	$(if $(GERRIT_BAZEL_BASE_PATH),,$(error GERRIT_BAZEL_BASE_PATH is not set))
+
+	@echo "******** !! Nuclear Clean Starting !! **********"
+	@echo Bazel output base path located here: $(GERRIT_BAZEL_BASE_PATH)
+
+	@# Clear bazel base output directory containing linked bazel-(out|bin|gerrit):
+	@echo "Deleting Bazel output base path..."
+	@rm -rf $(GERRIT_BAZEL_BASE_PATH)
+	@echo "******** !! Nuclear Clean Finished !! **********"
+
+.PHONY:nuclear-clean
 
 list-assets:
 	@echo "************ List Assets Starting **************"
@@ -206,22 +230,16 @@ testing_location:
 
 .PHONY:testing_location
 
-run-integration-tests: check_build_assets | $(testing_location)
-	@echo "\n************ Integration Tests Starting **************"
-	@echo "About to run integration tests -> resetting environment"
+run-acceptance-tests:
+	@echo "\n************ Acceptance Tests Starting **************"
+	@echo "About to run the Gerrit Acceptance Tests. These are the minimum required set of tests needed to run to verify Gerrits integrity."
+	@echo "We specify GERRITMS_REPLICATION_DISABLED=true so that replication is disabled."
+	@echo "Tests with the following labels in their BUILD files are disabled : [ elastic, docker, disabled ]"
 
-	@echo "Integration test location will be in: $(GERRIT_TEST_LOCATION)"
-	@echo "Release war path in makefile is: $(RELEASE_WAR_PATH)"
-	@echo "ConsoleApi jar path in makefile is: $(CONSOLE_API_RELEASE_JAR_PATH).jar"
-	@echo "GITMS_VERSION is: $(GITMS_VERSION)"
+	bazelisk test --cache_test_results=NO --test_env=GERRITMS_REPLICATION_DISABLED=true --test_tag_filters=-elastic,-docker,-disabled,-replication,-delete-project  //...
 
-
-	$(if $(GITMS_VERSION),,$(error GITMS_VERSION is not set))
-
-	./build-tools/run-integration-tests.sh $(RELEASE_WAR_PATH) $(GERRIT_TEST_LOCATION) $(CONSOLE_API_RELEASE_JAR_PATH) $(GITMS_VERSION)
-
-	@echo "\n************ Integration Tests Finished **************"
-.PHONY:run-integration-tests
+	@echo "\n************ Acceptance Tests Finished **************"
+.PHONY:run-acceptance-tests
 
 deploy: deploy-console deploy-gerrit
 .PHONY:deploy
@@ -261,7 +279,7 @@ deploy-gerrit:
 		-Dpackaging=war \
 		-Dfile=$(RELEASE_WAR_PATH) \
 		-DrepositoryId=artifacts \
-		-Durl=http://artifacts.wandisco.com:8081/artifactory/$(ARTIFACT_REPO)
+		-Durl=$(ARTIFACTORY_DESTINATION)
 
 	#Deploying the gerritms-installer.sh to com.google.gerrit/gerritms-installer
 	mvn -X deploy:deploy-file \
@@ -270,7 +288,7 @@ deploy-gerrit:
 		-Dversion=$(VERSION) \
 		-Dfile=$(GERRITMS_INSTALLER_OUT) \
 		-DrepositoryId=artifacts \
-		-Durl=http://artifacts.wandisco.com:8081/artifactory/$(ARTIFACT_REPO)
+		-Durl=$(ARTIFACTORY_DESTINATION)
 
 	@echo "\n************ Deploy  GerritMS Finished **************"
 
@@ -290,7 +308,7 @@ deploy-console:
 	-Dpackaging=jar \
 	-Dfile=$(CONSOLE_API_RELEASE_JAR_PATH) \
 	-DrepositoryId=artifacts \
-	-Durl=http://artifacts.wandisco.com:8081/artifactory/$(ARTIFACT_REPO)
+	-Durl=$(ARTIFACTORY_DESTINATION)
 	@echo "\n************ Deploy Console-API Phase Finished **************"
 .PHONY:deploy-console
 
@@ -306,13 +324,12 @@ help:
 	@echo "   make fast-assembly-console        -> will just build the GerritMS Console API package"
 	@echo "   make clean fast-assembly installer  -> will build the packages and installer asset"
 	@echo "   make installer                    -> will build the installer asset using already built packages"
-	@echo "   make run-integration-tests        -> will run the integration tests, against the already built packages"
-	@echo "   make list-assets					-> Will list all assets from a built project, and return them in env var: ASSETS_FOUND"
+	@echo "   make run-acceptance-tests         -> will run the Gerrit acceptance tests, against the already built packages"
+	@echo "   make list-assets                  -> Will list all assets from a built project, and return them in env var: ASSETS_FOUND"
 	@echo "   make deploy                       -> will deploy the installer packages of GerritMS and ConsoleAPI to artifactory"
 	@echo "   make deploy-gerrit                -> will deploy the installer package of GerritMS"
 	@echo "   make deploy-all-gerrit            -> will deploy all the assets associated with GerritMS"
 	@echo "   make deploy-console               -> will deploy the installer package of GerritMS Console API"
 	@echo "   make help                         -> Display available targets"
 .PHONY:help
-
 

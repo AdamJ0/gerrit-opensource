@@ -102,7 +102,7 @@ public class AccountIndexerImpl implements AccountIndexer {
    */
   private void indexImplementation(Account.Id id, boolean replicate) throws IOException {
 
-    byIdCache.evict(id);
+    byIdCache.evict(id, replicate);
     Optional<AccountState> accountState = byIdCache.get(id);
 
     if (accountState.isPresent()) {
@@ -121,14 +121,14 @@ public class AccountIndexerImpl implements AccountIndexer {
         }
       } else {
         try (TraceTimer traceTimer =
-                 TraceContext.newTimer(
-                     "Deleteing account %d in index version %d", id.get(), i.getSchema().getVersion())) {
+            TraceContext.newTimer(
+                "Deleting account %d in index version %d", id.get(), i.getSchema().getVersion())) {
           i.delete(id);
         }
       }
     }
 
-    if ( replicate && replicatedAccountsIndexManager != null) {
+    if (replicate && replicatedAccountsIndexManager != null) {
       replicatedAccountsIndexManager.replicateReindex(id);
     }
 

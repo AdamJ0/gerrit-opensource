@@ -106,6 +106,7 @@ public class ChangeIndexer {
   private final PluginSetContext<ChangeIndexedListener> indexedListeners;
   private final StalenessChecker stalenessChecker;
   private final boolean autoReindexIfStale;
+  private final boolean replicateAutoReindexIfStale;
 
   private final Set<IndexTask> queuedIndexTasks =
       Collections.newSetFromMap(new ConcurrentHashMap<>());
@@ -135,6 +136,7 @@ public class ChangeIndexer {
     this.stalenessChecker = stalenessChecker;
     this.batchExecutor = batchExecutor;
     this.autoReindexIfStale = autoReindexIfStale(cfg);
+    this.replicateAutoReindexIfStale = replicateAutoReindexIfStale(cfg);
     this.index = index;
     this.indexes = null;
   }
@@ -162,12 +164,17 @@ public class ChangeIndexer {
     this.stalenessChecker = stalenessChecker;
     this.batchExecutor = batchExecutor;
     this.autoReindexIfStale = autoReindexIfStale(cfg);
+    this.replicateAutoReindexIfStale = replicateAutoReindexIfStale(cfg);
     this.index = null;
     this.indexes = indexes;
   }
 
   private static boolean autoReindexIfStale(Config cfg) {
     return cfg.getBoolean("index", null, "autoReindexIfStale", false);
+  }
+
+  private static boolean replicateAutoReindexIfStale(Config cfg) {
+    return cfg.getBoolean("index", null, "replicateAutoReindexIfStale", false);
   }
 
   /**
@@ -211,7 +218,7 @@ public class ChangeIndexer {
   @SuppressWarnings("deprecation")
   private com.google.common.util.concurrent.CheckedFuture<?, IOException> indexAsyncImpl(
       Project.NameKey project, Change.Id id, boolean replicationEnabled) {
-    logger.atFiner().log("RC Going ASYNC to index %s replication: %s", id, lazy(() -> getReplicationString(replicationEnabled)));
+    logger.atFine().log("RC Going ASYNC to index %s replication: %s", id, lazy(() -> getReplicationString(replicationEnabled)));
     IndexTask task = new IndexTask(project, id, replicationEnabled);
     if (queuedIndexTasks.add(task)) {
       return submit(task);
@@ -606,8 +613,8 @@ public class ChangeIndexer {
       // change ID.
       for (ChangeIndex i : getWriteIndexes()) {
         try (TraceTimer traceTimer =
-                 TraceContext.newTimer(
-                     "Deleteing change %d in index version %d", id.get(), i.getSchema().getVersion())) {
+            TraceContext.newTimer(
+                "Deleting change %d in index version %d", id.get(), i.getSchema().getVersion())) {
           i.delete(id);
         }
       }
@@ -629,7 +636,10 @@ public class ChangeIndexer {
       remove();
       try {
         if (stalenessChecker.isStale(id)) {
-          indexImpl(newChangeData(db.get(), project, id), true);
+          logger.atFine().log("Change %s in project %s found to be stale reindexing replicated = %s .", id,
+                              project.get(),
+                              replicateAutoReindexIfStale);
+          indexImpl(newChangeData(db.get(), project, id), replicateAutoReindexIfStale);
           return true;
         }
       } catch (NoSuchChangeException nsce) {
