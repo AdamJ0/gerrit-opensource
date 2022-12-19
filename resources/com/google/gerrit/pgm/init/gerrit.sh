@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 #
 # Launch Gerrit Code Review as a daemon process.
 
@@ -98,7 +98,7 @@ get_config() {
 
 #Required to determine the version of the
 #gerrit.war file before attempting to start it
-function check_is_replicated_war(){
+check_is_replicated_war() {
   version=$(check_war_version $1)
   if [[ $version =~ "RP" ]]; then
       return 0
@@ -108,7 +108,7 @@ function check_is_replicated_war(){
 }
 
 #Return the war version.
-function check_war_version(){
+check_war_version() {
   version=$($JAVA -jar $1 version)
   echo $version
 }
@@ -133,6 +133,10 @@ while test $# -gt 0 ; do
     ;;
   --site-path=*)
     GERRIT_SITE=${1##--site-path=}
+    shift
+    ;;
+  --props=*)
+    JAVA_PROPS=${1//--props=}
     shift
     ;;
 
@@ -294,7 +298,7 @@ fi
 # Add Gerrit properties to Java VM options.
 #####################################################
 
-GERRIT_OPTIONS=`get_config --get-all container.javaOptions | tr '\n' ' '`
+GERRIT_OPTIONS=`get_config --get-all container.javaOptions | tr '\n' ' ' | sed -e 's/log4j\.Log4jBackendFactory#getInstance/slf4j.Slf4jBackendFactory#getInstance/g'`
 if test -n "$GERRIT_OPTIONS" ; then
   JAVA_OPTIONS="$JAVA_OPTIONS $GERRIT_OPTIONS"
 fi
@@ -370,6 +374,10 @@ if test -n "$DAEMON_OPTS" ; then
   RUN_ARGS="$RUN_ARGS $DAEMON_OPTS"
 fi
 
+if test -n "$JAVA_PROPS" ; then
+  RUN_ARGS="$JAVA_PROPS $RUN_ARGS"
+fi
+
 if test -n "$JAVA_OPTIONS" ; then
   RUN_ARGS="$JAVA_OPTIONS $RUN_ARGS"
 fi
@@ -397,6 +405,11 @@ case "$ACTION" in
   start)
     if ! check_is_replicated_war $GERRIT_WAR; then
         echo "** ERROR: $GERRIT_WAR version [ $(check_war_version $GERRIT_WAR ) ] doesn't contain RP. It is not a WANdisco replicated version."
+        exit 1
+    fi
+
+    if [[ -z "$(get_config --get noteDb.changes.sequenceBatchSize)" ]] ; then
+        echo "** ERROR: noteDb.changes.sequenceBatchSize is not set. See WANdisco documentation."
         exit 1
     fi
 

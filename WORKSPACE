@@ -245,9 +245,9 @@ maven_jar(
 )
 
 maven_jar(
-    name = "flogger-log4j-backend",
-    artifact = "com.google.flogger:flogger-log4j-backend:" + FLOGGER_VERS,
-    sha1 = "17aa5e31daa1354187e14b6978597d630391c028",
+    name = "flogger-slf4j-backend",
+    artifact = "com.google.flogger:flogger-slf4j-backend:" + FLOGGER_VERS,
+    sha1 = "0d211cf0e54bf05bda275c897bb3721614410efc",
 )
 
 maven_jar(
@@ -267,6 +267,13 @@ maven_jar(
     name = "gson",
     artifact = "com.google.code.gson:gson:2.8.5",
     sha1 = "f645ed69d595b24d4cf8b3fbb64cc505bede8829",
+)
+
+maven_jar(
+    name = "gwtorm-client",
+    artifact = "com.google.gerrit:gwtorm:1.18",
+    sha1 = "f326dec463439a92ccb32f05b38345e21d0b5ecf",
+    src_sha1 = "e0b973d5cafef3d145fa80cdf032fcead1186d29",
 )
 
 load("//lib:guava.bzl", "GUAVA_BIN_SHA1", "GUAVA_VERSION")
@@ -341,6 +348,12 @@ maven_jar(
     name = "jcl-over-slf4j",
     artifact = "org.slf4j:jcl-over-slf4j:" + SLF4J_VERS,
     sha1 = "33fbc2d93de829fa5e263c5ce97f5eab8f57d53e",
+)
+
+maven_jar(
+    name = "jul-to-slf4j",
+    artifact = "org.slf4j:jul-to-slf4j:" + SLF4J_VERS,
+    sha1 = "8031352b2bb0a49e67818bf04c027aa92e645d5c",
 )
 
 maven_jar(
@@ -1023,21 +1036,26 @@ maven_jar(
     sha1 = "8e8c1d8fc6144405700dd8df3b177f2801ac5987",
 )
 
-# TODO: trevorg tidy post - 2.16.16.
-#  I have explicitally put the jackson codehaus ones into a codehaus- prefix'd naming convention and into the
-#  //lib/jackson folder.  I do note a new nongoogle.bzl coming in later gerrit post 2.16.15,
-#  so this may move once we get there..
-maven_jar(
-    name = "codehaus-jackson-mapper-asl",
-    artifact = "org.codehaus.jackson:jackson-mapper-asl:1.9.13",
-    #    sha1 = "0f5a654e4675769c716e5b387830d19b501ca191",
-)
+
 
 maven_jar(
-    name = "codehaus-jackson-core-asl",
-    artifact = "org.codehaus.jackson:jackson-core-asl:1.9.13",
-    #    sha1 = "0f5a654e4675769c716e5b387830d19b501ca191",
+    name = "jackson-core",
+    artifact = "com.fasterxml.jackson.core:jackson-core:2.11.2",
+    sha1 = "bc022ab0f0c83c07f9c52c5ab9a6a4932b15cc35",
 )
+
+#jackson-databind contains all appropriate classes we require in gerrit-gitms-interface
+#such as ObjectMapper, JsonNode etc
+maven_jar(
+    name = "jackson-databind",
+    artifact = "com.fasterxml.jackson.core:jackson-databind:2.11.2",
+)
+#This is required by jackson databind ObjectMapper
+maven_jar(
+    name = "jackson-annotations",
+    artifact = "com.fasterxml.jackson.core:jackson-annotations:2.11.2",
+)
+
 
 maven_jar(
     name = "javax-activation",
@@ -1046,21 +1064,13 @@ maven_jar(
 )
 
 # WANdisco maven assets
-_GERRIT_GITMS_VERSION = "1.1.0.1-TC14-SNAPSHOT"
+_GERRIT_GITMS_VERSION = "1.1.0.1"
 
 maven_jar(
     name = "gerrit-gitms-interface",
     artifact = "com.wandisco:gerrit-gitms-interface:" + _GERRIT_GITMS_VERSION,
     repository = WANDISCO_ASSETS,
-    #    sha1 = 213e4234
-)
-
-_GERRIT_GWTORM_VERSION = "1.18.0.1-WD"
-
-maven_jar(
-    name = "gwtorm-client",
-    artifact = "com.google.gerrit:gwtorm:" + _GERRIT_GWTORM_VERSION,
-    repository = WANDISCO_ASSETS,
+    sha1 = "a0eb0feb042c06fa0974b45039a728c4c28cb3fd",
 )
 
 load("//tools/bzl:js.bzl", "bower_archive", "npm_binary")

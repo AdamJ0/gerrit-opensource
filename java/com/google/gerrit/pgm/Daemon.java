@@ -363,19 +363,19 @@ public class Daemon extends SiteProgram {
 
   @VisibleForTesting
   public void start() throws IOException {
+    ErrorLogFile.initLoggingBridge();
     if (dbInjector == null) {
       dbInjector = createDbInjector(true /* enableMetrics */, MULTI_USER);
     }
     cfgInjector = createCfgInjector();
     config = cfgInjector.getInstance(Key.get(Config.class, GerritServerConfig.class));
+    if (!consoleLog) {
+      manager.add(ErrorLogFile.start(getSitePath(), config));
+    }
     initIndexType();
     sysInjector = createSysInjector();
     sysInjector.getInstance(PluginGuiceEnvironment.class).setDbCfgInjector(dbInjector, cfgInjector);
     manager.add(dbInjector, cfgInjector, sysInjector);
-
-    if (!consoleLog) {
-      manager.add(ErrorLogFile.start(getSitePath(), config));
-    }
 
     sshd &= !sshdOff();
     if (sshd) {

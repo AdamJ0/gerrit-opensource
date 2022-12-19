@@ -17,6 +17,8 @@ import com.google.gerrit.reviewdb.client.Project;
 import com.google.gerrit.server.config.AllProjectsName;
 import com.google.gerrit.server.git.GitRepositoryManager;
 import com.google.gerrit.server.project.ProjectConfig;
+import com.google.gwtorm.client.KeyUtil;
+import com.google.gwtorm.server.StandardKeyEncoder;
 import com.google.inject.Inject;
 import com.google.inject.Injector;
 import org.eclipse.jgit.errors.ConfigInvalidException;
@@ -27,6 +29,10 @@ public class ProjectLoader {
   private final GitRepositoryManager mgr;
   private final Injector injector;
   private final AllProjectsName allProjects;
+
+  static {
+    KeyUtil.setEncoderImpl(new StandardKeyEncoder());
+  }
 
   @Inject
   public ProjectLoader(Injector injector, GitRepositoryManager mgr, AllProjectsName allProjects) {
@@ -40,7 +46,8 @@ public class ProjectLoader {
     return getProjectSnapshot(allProjects);
   }
 
-  /** Open Project, get configuration but take a SNAPSHOT of it at this point in time.
+  /**
+   * Open Project, get configuration but take a SNAPSHOT of it at this point in time.
    *
    * @param projectName  * String representation of projectname.
    * @return
@@ -52,7 +59,8 @@ public class ProjectLoader {
     return getProjectSnapshot(key);
   }
 
-  /** Open Project, get configuration but take a SNAPSHOT of it at this point in time.
+  /**
+   * Open Project, get configuration but take a SNAPSHOT of it at this point in time.
    *
    * @param key  Project name key object, representing project name.
    * @return
@@ -70,7 +78,7 @@ public class ProjectLoader {
   }
 
   /**
-   * Obtain configuration file or information from a project.   This could be any file within
+   * Obtain configuration file or information from a project. This could be any file within
    * any project given.
    * E.g. LFS.config file from the AllProjects repo.
    *
@@ -81,7 +89,7 @@ public class ProjectLoader {
    */
   public com.google.gerrit.gerritconsoleapi.bindings.ProjectLevelConfigNoCache getConfigFromProject(String fileName, ProjectStateMinDepends project) throws Exception {
 
-    // Get the ProjectLevel information, without have to clone the project ( via tree walk ).
+    // Get the ProjectLevel information, without having to clone the project ( via tree walk ).
     ProjectLevelConfigNoCache cfg = new ProjectLevelConfigNoCache(fileName, project);
     Project.NameKey name = project.getProject().getNameKey();
     try (Repository git = mgr.openRepository(name)) {
